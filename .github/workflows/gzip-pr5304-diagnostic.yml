@@ -40,17 +40,53 @@ jobs:
           from urllib3.response import GzipDecoder
 
           side = "${{ matrix.decoder_side }}"
-          raw = bytes.fromhex(
-              "2d17d30751dc84f2803b1d9e3648bd4b2fce3d833502835871f95440788295"
+
+          rng = random.Random(5304)
+          sizes = [0, 1, 7, 31, 256, 1024, 8192, 65536]
+          all_chunks = [1, 2, 7, 16, 64, 256, 1024, 8192, 65536]
+          all_limits = [1, 2, 7, 64, 1024, 8192, 65536, -1]
+
+          for rep in range(247):
+              size = rng.choice(sizes)
+              if size <= 8192:
+                  chunk_choices = all_chunks
+                  limit_choices = all_limits
+                  member_choices = [1, 1, 1, 2, 3, 8]
+              else:
+                  chunk_choices = [64, 256, 1024, 8192, 65536]
+                  limit_choices = [1024, 8192, 65536, -1]
+                  member_choices = [1, 1, 2, 3]
+
+              raw = rng.randbytes(size)
+              members = rng.choice(member_choices)
+              chunks = [rng.choice(chunk_choices) for _ in range(3)]
+              limits = [rng.choice(limit_choices) for _ in range(3)]
+              trailing_garbage = rng.random() < 0.20
+              if rep == 246:
+                  break
+
+          label = "random-246"
+          cuts = sorted(
+              [0]
+              + [
+                  random.Random(f"{label}:{j}").randrange(len(raw) + 1)
+                  for j in range(members - 1)
+              ]
+              + [len(raw)]
           )
-          cuts = [0, 6, 14, 17, 18, 19, 24, 30, 31]
-          chunks = [64, 65536, 256]
-          limits = [-1, 1, 8192]
           compressed = b"".join(
               gzip.compress(raw[cuts[j] : cuts[j + 1]], mtime=0)
-              for j in range(8)
+              for j in range(members)
           )
+          if trailing_garbage:
+              compressed += b"garbage"
 
+          assert len(raw) == 31
+          assert members == 8
+          assert chunks == [64, 65536, 256]
+          assert limits == [-1, 1, 8192]
+          assert trailing_garbage is False
+          assert cuts == [0, 6, 14, 17, 18, 19, 24, 30, 31]
           assert hashlib.sha256(raw).hexdigest() == (
               "ad1a02639be06e1013496d660707a9f19e5e476bb8edea7734b7de653f006a68"
           )
@@ -65,29 +101,27 @@ jobs:
           def marker():
               tail = getattr(decoder, "_unconsumed_tail", b"")
               obj = getattr(decoder, "_obj", None)
-              return {
-                  "tail_len": len(tail),
-                  "state": getattr(decoder, "_state", None),
-                  "eof": bool(getattr(obj, "eof", False)),
-                  "unused_len": len(getattr(obj, "unused_data", b"") or b"") if obj else None,
-                  "unconsumed_len": len(getattr(obj, "unconsumed_tail", b"") or b"") if obj else None,
-              }
+              return (
+                  len(tail),
+                  getattr(decoder, "_state", None),
+                  bool(getattr(obj, "eof", False)),
+                  len(getattr(obj, "unused_data", b"") or b"") if obj else None,
+                  len(getattr(obj, "unconsumed_tail", b"") or b"") if obj else None,
+              )
 
           print(f"side={side} compressed_len={len(compressed)}", flush=True)
           while pos < len(compressed):
               chunk_size = chunks[call % len(chunks)]
               limit = limits[call % len(limits)]
               piece = compressed[pos : pos + chunk_size]
-              before = marker()
               print(
                   f"CALL {call} FEED pos={pos} piece_len={len(piece)} "
-                  f"limit={limit} before={before}",
+                  f"limit={limit} before={marker()}",
                   flush=True,
               )
               out = decoder.decompress(piece, max_length=limit)
-              after = marker()
               print(
-                  f"CALL {call} RETURN out_len={len(out)} after={after}",
+                  f"CALL {call} RETURN out_len={len(out)} after={marker()}",
                   flush=True,
               )
               pos += len(piece)
@@ -95,40 +129,19 @@ jobs:
 
               drain = 0
               while decoder.has_unconsumed_tail and limit > 0:
-                  before = marker()
                   print(
-                      f"CALL {call}.{drain} DRAIN limit={limit} before={before}",
+                      f"CALL {call}.{drain} DRAIN limit={limit} before={marker()}",
                       flush=True,
                   )
                   out = decoder.decompress(b"", max_length=limit)
-                  after = marker()
                   print(
-                      f"CALL {call}.{drain} DRAIN_RETURN out_len={len(out)} after={after}",
+                      f"CALL {call}.{drain} DRAIN_RETURN "
+                      f"out_len={len(out)} after={marker()}",
                       flush=True,
                   )
                   drain += 1
                   if drain > 256:
                       raise RuntimeError("drain guard exceeded")
-
-          final_drain = 0
-          while decoder.has_unconsumed_tail:
-              limit = limits[call % len(limits)]
-              if limit <= 0:
-                  limit = -1
-              before = marker()
-              print(
-                  f"FINAL {final_drain} limit={limit} before={before}",
-                  flush=True,
-              )
-              out = decoder.decompress(b"", max_length=limit)
-              after = marker()
-              print(
-                  f"FINAL {final_drain} RETURN out_len={len(out)} after={after}",
-                  flush=True,
-              )
-              final_drain += 1
-              if final_drain > 256:
-                  raise RuntimeError("final drain guard exceeded")
 
           print("TRACE_COMPLETE", flush=True)
           PY
