@@ -145,13 +145,16 @@ def _check_differential_case(
         )
 
 
-def differential_stress(cases: int = 500) -> None:
+def differential_stress(
+    cases: int = 500, start_case: int = 0, run_targeted: bool = True
+) -> None:
     rng = random.Random(5304)
     sizes = [0, 1, 7, 31, 256, 1024, 8192, 65536]
     all_chunks = [1, 2, 7, 16, 64, 256, 1024, 8192, 65536]
     all_limits = [1, 2, 7, 64, 1024, 8192, 65536, -1]
 
-    for rep in range(cases):
+    stop_case = start_case + cases
+    for rep in range(stop_case):
         size = rng.choice(sizes)
 
         # Avoid turning the randomized semantic sweep into a Python-loop
@@ -173,17 +176,28 @@ def differential_stress(cases: int = 500) -> None:
         chunks = [rng.choice(chunk_choices) for _ in range(3)]
         limits = [rng.choice(limit_choices) for _ in range(3)]
 
+        trailing_garbage = rng.random() < 0.20
+        if rep < start_case:
+            continue
+
+        label = f"random-{rep}"
+        print(
+            f"case_start {label} size={size} members={members} "
+            f"chunks={chunks} limits={limits}",
+            flush=True,
+        )
         _check_differential_case(
             raw,
             members,
             chunks,
             limits,
-            rng.random() < 0.20,
-            f"random-{rep}",
+            trailing_garbage,
+            label,
         )
 
-        if (rep + 1) % 100 == 0:
-            print(f"progress: {rep + 1}/{cases}", flush=True)
+        completed = rep - start_case + 1
+        if completed % 25 == 0:
+            print(f"progress: {completed}/{cases}", flush=True)
 
     targeted = [
         # Tiny chunk + tiny max_length: worst loop shape, deliberately small body.
@@ -195,18 +209,22 @@ def differential_stress(cases: int = 500) -> None:
         # Large multi-member body + trailing garbage, unbounded output.
         (262144, 8, [1024, 8192, 65536], [-1], True),
     ]
-    for i, (size, members, chunks, limits, garbage) in enumerate(targeted):
-        _check_differential_case(
-            random.Random(5304 + i).randbytes(size),
-            members,
-            chunks,
-            limits,
-            garbage,
-            f"targeted-{i}",
-        )
+    if run_targeted:
+        for i, (size, members, chunks, limits, garbage) in enumerate(targeted):
+            _check_differential_case(
+                random.Random(5304 + i).randbytes(size),
+                members,
+                chunks,
+                limits,
+                garbage,
+                f"targeted-{i}",
+            )
 
+    targeted_count = len(targeted) if run_targeted else 0
     print(
-        f"DIFFERENTIAL_STRESS: PASS ({cases} randomized + {len(targeted)} targeted cases)"
+        "DIFFERENTIAL_STRESS: PASS "
+        f"(randomized cases {start_case}..{stop_case - 1} + "
+        f"{targeted_count} targeted cases)"
     )
 
 
@@ -387,10 +405,16 @@ def main() -> None:
         default="all",
     )
     parser.add_argument("--cases", type=int, default=5000)
+    parser.add_argument("--start-case", type=int, default=0)
+    parser.add_argument("--skip-targeted", action="store_true")
     args = parser.parse_args()
 
     if args.mode in ("all", "correctness"):
-        differential_stress(args.cases)
+        differential_stress(
+            args.cases,
+            start_case=args.start_case,
+            run_targeted=not args.skip_targeted,
+        )
     if args.mode in ("all", "performance"):
         run_performance()
     if args.mode in ("all", "fallback"):

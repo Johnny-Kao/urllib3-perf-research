@@ -1,0 +1,38 @@
+name: gzip PR5304 diagnostic slices
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+jobs:
+  correctness-slices:
+    strategy:
+      fail-fast: false
+      matrix:
+        start_case: [200, 250]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install current source
+        shell: bash
+        run: python -m pip install -e .
+      - name: Verify source provenance
+        shell: bash
+        run: |
+          python - <<'PY'
+          import urllib3.response
+          source = urllib3.response.__file__.replace("\\", "/")
+          print("response_source=", source)
+          assert "/src/urllib3/response.py" in source
+          PY
+      - name: Run deterministic correctness slice
+        shell: bash
+        run: |
+          python benchmarks/pr5304_gzip_evidence.py             --mode correctness             --start-case ${{ matrix.start_case }}             --cases 50             --skip-targeted
