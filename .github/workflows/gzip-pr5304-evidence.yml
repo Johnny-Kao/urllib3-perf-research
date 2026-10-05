@@ -1,0 +1,45 @@
+name: gzip PR5304 evidence
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - research/gzip-lazy-accumulator
+    paths:
+      - "benchmarks/pr5304_gzip_evidence.py"
+      - ".github/workflows/gzip-pr5304-evidence.yml"
+      - "src/urllib3/response.py"
+
+jobs:
+  stress-and-benchmark:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.14"
+          - os: macos-14
+            python: "3.14"
+          - os: windows-latest
+            python: "3.14"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify source and run evidence harness
+        shell: bash
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "src")
+          import urllib3.response
+          print("response_source=", urllib3.response.__file__)
+          assert "/src/urllib3/response.py" in urllib3.response.__file__.replace("\\", "/")
+          PY
+          PYTHONPATH=src python benchmarks/pr5304_gzip_evidence.py | tee pr5304-evidence.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr5304-evidence-${{ matrix.os }}
+          path: pr5304-evidence.txt
