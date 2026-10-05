@@ -5,6 +5,11 @@ permissions:
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - research/gzip-lazy-accumulator
+    paths:
+      - ".github/workflows/gzip-pr5304-diagnostic.yml"
 
 jobs:
   correctness-slices:
