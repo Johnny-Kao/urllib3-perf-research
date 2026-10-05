@@ -11,20 +11,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  case-246-factor-isolation:
+  differential-smoke:
     strategy:
       fail-fast: false
       matrix:
-        decoder_side: [baseline, candidate]
-        variant:
-          - original
-          - fixed_chunk_64
-          - fixed_limit_neg1
-          - fixed_limit_1
-          - fixed_limit_8192
-          - single_chunk_full
-    runs-on: macos-14
-    timeout-minutes: 2
+        os: [ubuntu-latest, macos-14, windows-latest]
+        decoder_side: [both]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,85 +38,11 @@ jobs:
           print("response_source=", source)
           assert "/src/urllib3/response.py" in source
           PY
-      - name: Run case 246 factor isolation
+      - name: Run bounded differential smoke
         shell: bash
         run: |
-          python - <<'PY'
-          import gzip
-          import random
-          import sys
-
-          from benchmarks.pr5304_gzip_evidence import (
-              BaselineGzipDecoder,
-              run_stream,
-          )
-          from urllib3.response import GzipDecoder
-
-          decoder_side = "${{ matrix.decoder_side }}"
-          variant = "${{ matrix.variant }}"
-
-          rng = random.Random(5304)
-          raw = None
-          members = None
-          chunks = None
-          limits = None
-          for rep in range(247):
-              size = rng.randrange(0, 2**18)
-              raw_i = rng.randbytes(size)
-              members_i = rng.randrange(1, 9)
-              chunk_choices = [1, 7, 64, 256, 4096, 65536]
-              chunks_i = [rng.choice(chunk_choices) for _ in range(rng.randrange(1, 4))]
-              limit_choices = [-1, 1, 17, 8192]
-              limits_i = [rng.choice(limit_choices) for _ in range(rng.randrange(1, 4))]
-              trailing_garbage = rng.random() < 0.05
-              if rep == 246:
-                  raw = raw_i
-                  members = members_i
-                  chunks = chunks_i
-                  limits = limits_i
-                  break
-
-          assert raw is not None
-          label = "random-246"
-          cuts = sorted(
-              [0]
-              + [
-                  random.Random(f"{label}:{j}").randrange(len(raw) + 1)
-                  for j in range(members - 1)
-              ]
-              + [len(raw)]
-          )
-          compressed = b"".join(
-              gzip.compress(raw[cuts[j] : cuts[j + 1]])
-              for j in range(members)
-          )
-
-          if variant == "fixed_chunk_64":
-              chunks = [64]
-          elif variant == "fixed_limit_neg1":
-              limits = [-1]
-          elif variant == "fixed_limit_1":
-              limits = [1]
-          elif variant == "fixed_limit_8192":
-              limits = [8192]
-          elif variant == "single_chunk_full":
-              chunks = [len(compressed)]
-
-          decoder_cls = (
-              BaselineGzipDecoder if decoder_side == "baseline" else GzipDecoder
-          )
-
-          print(
-              f"START side={decoder_side} variant={variant} "
-              f"size={len(raw)} members={members} cuts={cuts} "
-              f"chunks={chunks} limits={limits} compressed={len(compressed)}",
-              flush=True,
-          )
-          result = run_stream(decoder_cls, compressed, chunks, limits)
-          print(
-              f"DONE side={decoder_side} variant={variant} "
-              f"output={len(result[0])} error={result[1]}",
-              flush=True,
-          )
-          sys.exit(0 if result[1] is None else 1)
-          PY
+          python benchmarks/pr5304_gzip_evidence.py \
+            --mode correctness \
+            --start-case 0 \
+            --cases 300 \
+            --decoder-side both
