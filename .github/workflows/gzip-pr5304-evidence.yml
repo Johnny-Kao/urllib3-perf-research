@@ -28,17 +28,20 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+      - name: Install current source
+        shell: bash
+        run: python -m pip install -e .
+
       - name: Verify source and run evidence harness
         shell: bash
         run: |
           python - <<'PY'
-          import sys
-          sys.path.insert(0, "src")
           import urllib3.response
-          print("response_source=", urllib3.response.__file__)
-          assert "/src/urllib3/response.py" in urllib3.response.__file__.replace("\\", "/")
+          source = urllib3.response.__file__.replace("\\", "/")
+          print("response_source=", source)
+          assert "/src/urllib3/response.py" in source
           PY
-          PYTHONPATH=src python benchmarks/pr5304_gzip_evidence.py | tee pr5304-evidence.txt
+          python benchmarks/pr5304_gzip_evidence.py | tee pr5304-evidence.txt
       - uses: actions/upload-artifact@v4
         with:
           name: pr5304-evidence-${{ matrix.os }}
