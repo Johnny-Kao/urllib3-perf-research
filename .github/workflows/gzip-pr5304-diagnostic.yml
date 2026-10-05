@@ -11,11 +11,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  case-246:
+  controlled-case-246:
     strategy:
       fail-fast: false
       matrix:
         decoder_side: [baseline, candidate]
+        members: [1, 2, 4, 8]
+        max_length: [-1, 1]
     runs-on: macos-14
     timeout-minutes: 2
     steps:
@@ -37,12 +39,50 @@ jobs:
           print("response_source=", source)
           assert "/src/urllib3/response.py" in source
           PY
-      - name: Run case 246 (${{ matrix.decoder_side }})
+      - name: Run controlled gzip case
         shell: bash
         run: |
-          python benchmarks/pr5304_gzip_evidence.py \
-            --mode correctness \
-            --start-case 246 \
-            --cases 1 \
-            --skip-targeted \
-            --decoder-side ${{ matrix.decoder_side }}
+          python - <<'PY'
+          import gzip
+          import random
+          import sys
+
+          from benchmarks.pr5304_gzip_evidence import (
+              BaselineGzipDecoder,
+              run_stream,
+          )
+          from urllib3.response import GzipDecoder
+
+          decoder_side = "${{ matrix.decoder_side }}"
+          members = int("${{ matrix.members }}")
+          max_length = int("${{ matrix.max_length }}")
+
+          raw = random.Random(5304).randbytes(31)
+          cuts = [round(i * len(raw) / members) for i in range(members + 1)]
+          compressed = b"".join(
+              gzip.compress(raw[cuts[i]:cuts[i + 1]])
+              for i in range(members)
+          )
+
+          decoder_cls = (
+              BaselineGzipDecoder if decoder_side == "baseline" else GzipDecoder
+          )
+          print(
+              f"START side={decoder_side} members={members} "
+              f"max_length={max_length} compressed={len(compressed)}",
+              flush=True,
+          )
+          result = run_stream(
+              decoder_cls,
+              compressed,
+              chunk_sizes=[64],
+              limits=[max_length],
+          )
+          print(
+              f"DONE side={decoder_side} members={members} "
+              f"max_length={max_length} output={len(result[0])} "
+              f"error={result[1]}",
+              flush=True,
+          )
+          sys.exit(0 if result[1] is None else 1)
+          PY
