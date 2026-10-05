@@ -10,14 +10,20 @@ on:
       - research/gzip-lazy-accumulator
     paths:
       - ".github/workflows/gzip-pr5304-diagnostic.yml"
+      - "benchmarks/pr5304_gzip_evidence.py"
+
+concurrency:
+  group: gzip-pr5304-diagnostic-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  correctness-slices:
+  case-246:
     strategy:
       fail-fast: false
       matrix:
-        start_case: [246]
+        decoder_side: [baseline, candidate]
     runs-on: macos-14
+    timeout-minutes: 2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,7 +43,12 @@ jobs:
           print("response_source=", source)
           assert "/src/urllib3/response.py" in source
           PY
-      - name: Run deterministic correctness slice
+      - name: Run case 246 (${{ matrix.decoder_side }})
         shell: bash
         run: |
-          python benchmarks/pr5304_gzip_evidence.py             --mode correctness             --start-case ${{ matrix.start_case }}             --cases 1             --skip-targeted
+          python benchmarks/pr5304_gzip_evidence.py \
+            --mode correctness \
+            --start-case 246 \
+            --cases 1 \
+            --skip-targeted \
+            --decoder-side ${{ matrix.decoder_side }}
