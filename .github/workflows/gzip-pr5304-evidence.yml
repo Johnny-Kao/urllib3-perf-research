@@ -1,0 +1,107 @@
+name: gzip PR5304 evidence
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+jobs:
+  correctness-stress:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.14"
+          - os: macos-14
+            python: "3.14"
+          - os: windows-latest
+            python: "3.14"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install current source
+        shell: bash
+        run: python -m pip install -e .
+      - name: Verify source provenance
+        shell: bash
+        run: |
+          python - <<'PY'
+          import urllib3.response
+          source = urllib3.response.__file__.replace("\\", "/")
+          print("response_source=", source)
+          assert "/src/urllib3/response.py" in source
+          PY
+      - name: Differential correctness stress
+        shell: bash
+        run: python benchmarks/pr5304_gzip_evidence.py --mode correctness --cases 500 | tee correctness.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr5304-correctness-${{ matrix.os }}
+          path: correctness.txt
+
+  performance-ab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install current source
+        shell: bash
+        run: python -m pip install -e .
+      - name: Performance A/B
+        shell: bash
+        run: python benchmarks/pr5304_gzip_evidence.py --mode performance | tee performance.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr5304-performance
+          path: performance.txt
+
+  fallback-stress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install current source
+        shell: bash
+        run: python -m pip install -e .
+      - name: Multi-member and bounded stress
+        shell: bash
+        run: python benchmarks/pr5304_gzip_evidence.py --mode fallback | tee fallback.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr5304-fallback
+          path: fallback.txt
+
+  memory-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install current source
+        shell: bash
+        run: python -m pip install -e .
+      - name: Memory probe
+        shell: bash
+        run: python benchmarks/pr5304_gzip_evidence.py --mode memory | tee memory.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pr5304-memory
+          path: memory.txt
