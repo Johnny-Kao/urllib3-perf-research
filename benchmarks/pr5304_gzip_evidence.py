@@ -67,6 +67,41 @@ class BaselineGzipDecoder:
         return self._obj.flush()
 
 
+def _progress_marker(
+    decoder: BaselineGzipDecoder | GzipDecoder, out_len: int
+) -> tuple[int, int, object, bool]:
+    tail = getattr(decoder, "_unconsumed_tail", b"")
+    obj = getattr(decoder, "_obj", None)
+    return (
+        len(tail),
+        out_len,
+        getattr(decoder, "_state", None),
+        bool(getattr(obj, "eof", False)),
+    )
+
+
+def _drain_tail(
+    decoder: BaselineGzipDecoder | GzipDecoder,
+    out: bytearray,
+    limit: int,
+    *,
+    label: str,
+    max_steps: int,
+) -> None:
+    for step in range(max_steps):
+        if not decoder.has_unconsumed_tail:
+            return
+        before = _progress_marker(decoder, len(out))
+        out += decoder.decompress(b"", max_length=limit)
+        after = _progress_marker(decoder, len(out))
+        if after == before:
+            raise RuntimeError(
+                f"{label} made no progress at step={step} "
+                f"tail={after[0]} out={after[1]} state={after[2]} eof={after[3]}"
+            )
+    raise RuntimeError(f"{label} exceeded {max_steps} drain steps")
+
+
 def run_stream(
     decoder_cls: type[BaselineGzipDecoder] | type[GzipDecoder],
     compressed: bytes,
@@ -85,24 +120,28 @@ def run_stream(
             limit = limits[i % len(limits)]
             out += decoder.decompress(piece, max_length=limit)
 
-            guard = 0
-            while decoder.has_unconsumed_tail and limit > 0:
-                out += decoder.decompress(b"", max_length=limit)
-                guard += 1
-                if guard > 200_000:
-                    raise RuntimeError("tail-drain loop")
+            if decoder.has_unconsumed_tail and limit > 0:
+                _drain_tail(
+                    decoder,
+                    out,
+                    limit,
+                    label="tail-drain",
+                    max_steps=max(len(compressed) * 4, 1024),
+                )
             i += 1
 
-        guard = 0
         while decoder.has_unconsumed_tail:
             limit = limits[i % len(limits)]
-            if limit == 0:
-                limit = 1
-            out += decoder.decompress(b"", max_length=limit)
+            if limit <= 0:
+                limit = -1
+            _drain_tail(
+                decoder,
+                out,
+                limit,
+                label="final-tail-drain",
+                max_steps=max(len(compressed) * 4, 1024),
+            )
             i += 1
-            guard += 1
-            if guard > 200_000:
-                raise RuntimeError("final tail-drain loop")
 
         out += decoder.decompress(b"")
         out += decoder.flush()
