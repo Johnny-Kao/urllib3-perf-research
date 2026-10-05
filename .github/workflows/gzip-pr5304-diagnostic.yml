@@ -11,14 +11,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  differential-smoke:
+  freeze-case-246:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-14, windows-latest]
-        decoder_side: [both]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+        decoder_side: [baseline, candidate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -29,20 +28,71 @@ jobs:
       - name: Install current source
         shell: bash
         run: python -m pip install -e .
-      - name: Verify source provenance
+      - name: Freeze exact random-246 and replay one side
         shell: bash
         run: |
           python - <<'PY'
-          import urllib3.response
-          source = urllib3.response.__file__.replace("\\", "/")
-          print("response_source=", source)
-          assert "/src/urllib3/response.py" in source
+          import gzip
+          import hashlib
+          import random
+          import sys
+
+          from benchmarks.pr5304_gzip_evidence import (
+              BaselineGzipDecoder,
+              run_stream,
+          )
+          from urllib3.response import GzipDecoder
+
+          side = "${{ matrix.decoder_side }}"
+          rng = random.Random(5304)
+
+          for rep in range(247):
+              size = rng.randrange(0, 2**18)
+              raw = rng.randbytes(size)
+              members = rng.randrange(1, 9)
+              chunk_choices = [1, 7, 64, 256, 4096, 65536]
+              chunks = [rng.choice(chunk_choices) for _ in range(rng.randrange(1, 4))]
+              limit_choices = [-1, 1, 17, 8192]
+              limits = [rng.choice(limit_choices) for _ in range(rng.randrange(1, 4))]
+              trailing_garbage = rng.random() < 0.05
+              if rep == 246:
+                  break
+
+          label = "random-246"
+          cuts = sorted(
+              [0]
+              + [
+                  random.Random(f"{label}:{j}").randrange(len(raw) + 1)
+                  for j in range(members - 1)
+              ]
+              + [len(raw)]
+          )
+          compressed = b"".join(
+              gzip.compress(raw[cuts[j] : cuts[j + 1]], mtime=0)
+              for j in range(members)
+          )
+          if trailing_garbage:
+              compressed += b"garbage"
+
+          print(f"side={side}", flush=True)
+          print(f"size={len(raw)} members={members}", flush=True)
+          print(f"chunks={chunks} limits={limits}", flush=True)
+          print(f"trailing_garbage={trailing_garbage}", flush=True)
+          print(f"cuts={cuts}", flush=True)
+          print(f"raw_sha256={hashlib.sha256(raw).hexdigest()}", flush=True)
+          print(
+              f"compressed_sha256={hashlib.sha256(compressed).hexdigest()} "
+              f"compressed_len={len(compressed)}",
+              flush=True,
+          )
+          print(f"compressed_hex={compressed.hex()}", flush=True)
+
+          decoder_cls = BaselineGzipDecoder if side == "baseline" else GzipDecoder
+          print(f"{side}_start", flush=True)
+          result = run_stream(decoder_cls, compressed, chunks, limits)
+          print(
+              f"{side}_done output={len(result[0])} error={result[1]}",
+              flush=True,
+          )
+          sys.exit(0 if result[1] is None else 1)
           PY
-      - name: Run bounded differential smoke
-        shell: bash
-        run: |
-          python benchmarks/pr5304_gzip_evidence.py \
-            --mode correctness \
-            --start-case 0 \
-            --cases 300 \
-            --decoder-side both
