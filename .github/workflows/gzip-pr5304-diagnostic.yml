@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  freeze-case-246:
+  freeze-real-case-246:
     strategy:
       fail-fast: false
       matrix:
@@ -28,7 +28,7 @@ jobs:
       - name: Install current source
         shell: bash
         run: python -m pip install -e .
-      - name: Freeze exact random-246 and replay one side
+      - name: Freeze and replay true random-246
         shell: bash
         run: |
           python - <<'PY'
@@ -45,16 +45,26 @@ jobs:
 
           side = "${{ matrix.decoder_side }}"
           rng = random.Random(5304)
+          sizes = [0, 1, 7, 31, 256, 1024, 8192, 65536]
+          all_chunks = [1, 2, 7, 16, 64, 256, 1024, 8192, 65536]
+          all_limits = [1, 2, 7, 64, 1024, 8192, 65536, -1]
 
           for rep in range(247):
-              size = rng.randrange(0, 2**18)
+              size = rng.choice(sizes)
+              if size <= 8192:
+                  chunk_choices = all_chunks
+                  limit_choices = all_limits
+                  member_choices = [1, 1, 1, 2, 3, 8]
+              else:
+                  chunk_choices = [64, 256, 1024, 8192, 65536]
+                  limit_choices = [1024, 8192, 65536, -1]
+                  member_choices = [1, 1, 2, 3]
+
               raw = rng.randbytes(size)
-              members = rng.randrange(1, 9)
-              chunk_choices = [1, 7, 64, 256, 4096, 65536]
-              chunks = [rng.choice(chunk_choices) for _ in range(rng.randrange(1, 4))]
-              limit_choices = [-1, 1, 17, 8192]
-              limits = [rng.choice(limit_choices) for _ in range(rng.randrange(1, 4))]
-              trailing_garbage = rng.random() < 0.05
+              members = rng.choice(member_choices)
+              chunks = [rng.choice(chunk_choices) for _ in range(3)]
+              limits = [rng.choice(limit_choices) for _ in range(3)]
+              trailing_garbage = rng.random() < 0.20
               if rep == 246:
                   break
 
@@ -85,7 +95,6 @@ jobs:
               f"compressed_len={len(compressed)}",
               flush=True,
           )
-          print(f"compressed_hex={compressed.hex()}", flush=True)
 
           decoder_cls = BaselineGzipDecoder if side == "baseline" else GzipDecoder
           print(f"{side}_start", flush=True)
