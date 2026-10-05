@@ -11,13 +11,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  trace-real-case-246:
+  differential-smoke:
     strategy:
       fail-fast: false
       matrix:
-        decoder_side: [baseline, candidate]
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
+        os: [ubuntu-latest, macos-14, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -28,120 +28,20 @@ jobs:
       - name: Install current source
         shell: bash
         run: python -m pip install -e .
-      - name: Trace exact random-246 call boundary
+      - name: Verify source provenance
         shell: bash
         run: |
           python - <<'PY'
-          import gzip
-          import hashlib
-          import random
-
-          from benchmarks.pr5304_gzip_evidence import BaselineGzipDecoder
-          from urllib3.response import GzipDecoder
-
-          side = "${{ matrix.decoder_side }}"
-
-          rng = random.Random(5304)
-          sizes = [0, 1, 7, 31, 256, 1024, 8192, 65536]
-          all_chunks = [1, 2, 7, 16, 64, 256, 1024, 8192, 65536]
-          all_limits = [1, 2, 7, 64, 1024, 8192, 65536, -1]
-
-          for rep in range(247):
-              size = rng.choice(sizes)
-              if size <= 8192:
-                  chunk_choices = all_chunks
-                  limit_choices = all_limits
-                  member_choices = [1, 1, 1, 2, 3, 8]
-              else:
-                  chunk_choices = [64, 256, 1024, 8192, 65536]
-                  limit_choices = [1024, 8192, 65536, -1]
-                  member_choices = [1, 1, 2, 3]
-
-              raw = rng.randbytes(size)
-              members = rng.choice(member_choices)
-              chunks = [rng.choice(chunk_choices) for _ in range(3)]
-              limits = [rng.choice(limit_choices) for _ in range(3)]
-              trailing_garbage = rng.random() < 0.20
-              if rep == 246:
-                  break
-
-          label = "random-246"
-          cuts = sorted(
-              [0]
-              + [
-                  random.Random(f"{label}:{j}").randrange(len(raw) + 1)
-                  for j in range(members - 1)
-              ]
-              + [len(raw)]
-          )
-          compressed = b"".join(
-              gzip.compress(raw[cuts[j] : cuts[j + 1]], mtime=0)
-              for j in range(members)
-          )
-          if trailing_garbage:
-              compressed += b"garbage"
-
-          assert len(raw) == 31
-          assert members == 8
-          assert chunks == [64, 65536, 256]
-          assert limits == [-1, 1, 8192]
-          assert trailing_garbage is False
-          assert cuts == [0, 6, 14, 17, 18, 19, 24, 30, 31]
-          assert hashlib.sha256(raw).hexdigest() == (
-              "ad1a02639be06e1013496d660707a9f19e5e476bb8edea7734b7de653f006a68"
-          )
-          assert hashlib.sha256(compressed).hexdigest() == (
-              "d95cd9d73b8577e0b9c15d8c2aeafcd68fb80b7221d624a914ada4ae0b86afa9"
-          )
-
-          decoder = BaselineGzipDecoder() if side == "baseline" else GzipDecoder()
-          pos = 0
-          call = 0
-
-          def marker():
-              tail = getattr(decoder, "_unconsumed_tail", b"")
-              obj = getattr(decoder, "_obj", None)
-              return (
-                  len(tail),
-                  getattr(decoder, "_state", None),
-                  bool(getattr(obj, "eof", False)),
-                  len(getattr(obj, "unused_data", b"") or b"") if obj else None,
-                  len(getattr(obj, "unconsumed_tail", b"") or b"") if obj else None,
-              )
-
-          print(f"side={side} compressed_len={len(compressed)}", flush=True)
-          while pos < len(compressed):
-              chunk_size = chunks[call % len(chunks)]
-              limit = limits[call % len(limits)]
-              piece = compressed[pos : pos + chunk_size]
-              print(
-                  f"CALL {call} FEED pos={pos} piece_len={len(piece)} "
-                  f"limit={limit} before={marker()}",
-                  flush=True,
-              )
-              out = decoder.decompress(piece, max_length=limit)
-              print(
-                  f"CALL {call} RETURN out_len={len(out)} after={marker()}",
-                  flush=True,
-              )
-              pos += len(piece)
-              call += 1
-
-              drain = 0
-              while decoder.has_unconsumed_tail and limit > 0:
-                  print(
-                      f"CALL {call}.{drain} DRAIN limit={limit} before={marker()}",
-                      flush=True,
-                  )
-                  out = decoder.decompress(b"", max_length=limit)
-                  print(
-                      f"CALL {call}.{drain} DRAIN_RETURN "
-                      f"out_len={len(out)} after={marker()}",
-                      flush=True,
-                  )
-                  drain += 1
-                  if drain > 256:
-                      raise RuntimeError("drain guard exceeded")
-
-          print("TRACE_COMPLETE", flush=True)
+          import urllib3.response
+          source = urllib3.response.__file__.replace("\\", "/")
+          print("response_source=", source)
+          assert "/src/urllib3/response.py" in source
           PY
+      - name: Run bounded differential smoke
+        shell: bash
+        run: |
+          python benchmarks/pr5304_gzip_evidence.py \
+            --mode correctness \
+            --start-case 0 \
+            --cases 300 \
+            --decoder-side both
