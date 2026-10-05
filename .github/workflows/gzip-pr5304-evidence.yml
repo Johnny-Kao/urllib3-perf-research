@@ -11,7 +11,7 @@ on:
       - "src/urllib3/response.py"
 
 jobs:
-  stress-and-benchmark:
+  correctness-stress:
     strategy:
       fail-fast: false
       matrix:
@@ -31,8 +31,7 @@ jobs:
       - name: Install current source
         shell: bash
         run: python -m pip install -e .
-
-      - name: Verify source and run evidence harness
+      - name: Verify source provenance
         shell: bash
         run: |
           python - <<'PY'
@@ -41,8 +40,64 @@ jobs:
           print("response_source=", source)
           assert "/src/urllib3/response.py" in source
           PY
-          python benchmarks/pr5304_gzip_evidence.py | tee pr5304-evidence.txt
+      - name: Differential correctness stress
+        shell: bash
+        run: python benchmarks/pr5304_gzip_evidence.py --mode correctness --cases 2000 | tee correctness.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: pr5304-evidence-${{ matrix.os }}
-          path: pr5304-evidence.txt
+          name: pr5304-correctness-${{ matrix.os }}
+          path: correctness.txt
+
+  performance-ab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install current source
+        shell: bash
+        run: python -m pip install -e .
+      - name: Performance A/B
+        shell: bash
+        run: python benchmarks/pr5304_gzip_evidence.py --mode performance | tee performance.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr5304-performance
+          path: performance.txt
+
+  fallback-stress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install current source
+        shell: bash
+        run: python -m pip install -e .
+      - name: Multi-member and bounded stress
+        shell: bash
+        run: python benchmarks/pr5304_gzip_evidence.py --mode fallback | tee fallback.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr5304-fallback
+          path: fallback.txt
+
+  memory-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install current source
+        shell: bash
+        run: python -m pip install -e .
+      - name: Memory probe
+        shell: bash
+        run: python benchmarks/pr5304_gzip_evidence.py --mode memory | tee memory.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr5304-memory
+          path: memory.txt

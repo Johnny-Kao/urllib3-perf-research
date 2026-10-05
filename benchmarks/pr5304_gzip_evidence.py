@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import gzip
 import json
 import random
@@ -272,9 +273,7 @@ def memory_probe(raw: bytes) -> dict[str, int]:
     return out
 
 
-def main() -> None:
-    differential_stress()
-
+def run_performance() -> None:
     rng = random.Random(5304)
     rows = []
     for size in (1 * 1024 * 1024, 4 * 1024 * 1024, 10 * 1024 * 1024):
@@ -293,21 +292,45 @@ def main() -> None:
                 paired_full_decode(rng.randbytes(size), loops=loops),
             )
         )
-
     print("FULL_DECODE_RESULTS:")
     for name, row in rows:
         print(name, json.dumps(row, sort_keys=True))
 
+
+def run_fallback() -> None:
+    rng = random.Random(5304)
     bounded_raw = rng.randbytes(4 * 1024 * 1024)
     print("BOUNDED_RESULTS:")
     for limit in (1, 64, 1024, 16384, 65536, 262144):
         print(json.dumps(bounded_benchmark(bounded_raw, limit), sort_keys=True))
-
     print("MULTI_MEMBER_RESULT:")
     print(json.dumps(multi_member_benchmark(), sort_keys=True))
 
+
+def run_memory() -> None:
+    rng = random.Random(5304)
     print("MEMORY_RESULT:")
     print(json.dumps(memory_probe(rng.randbytes(10 * 1024 * 1024)), sort_keys=True))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--mode",
+        choices=("all", "correctness", "performance", "fallback", "memory"),
+        default="all",
+    )
+    parser.add_argument("--cases", type=int, default=5000)
+    args = parser.parse_args()
+
+    if args.mode in ("all", "correctness"):
+        differential_stress(args.cases)
+    if args.mode in ("all", "performance"):
+        run_performance()
+    if args.mode in ("all", "fallback"):
+        run_fallback()
+    if args.mode in ("all", "memory"):
+        run_memory()
 
     print("EVIDENCE_RUN: PASS")
 
