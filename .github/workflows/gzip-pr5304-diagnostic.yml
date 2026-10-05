@@ -11,13 +11,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  controlled-case-246:
+  case-246-factor-isolation:
     strategy:
       fail-fast: false
       matrix:
         decoder_side: [baseline, candidate]
-        members: [1, 2, 4, 8]
-        max_length: [-1, 1]
+        variant:
+          - original
+          - fixed_chunk_64
+          - fixed_limit_neg1
+          - fixed_limit_1
+          - fixed_limit_8192
+          - single_chunk_full
     runs-on: macos-14
     timeout-minutes: 2
     steps:
@@ -39,7 +44,7 @@ jobs:
           print("response_source=", source)
           assert "/src/urllib3/response.py" in source
           PY
-      - name: Run controlled gzip case
+      - name: Run case 246 factor isolation
         shell: bash
         run: |
           python - <<'PY'
@@ -54,34 +59,69 @@ jobs:
           from urllib3.response import GzipDecoder
 
           decoder_side = "${{ matrix.decoder_side }}"
-          members = int("${{ matrix.members }}")
-          max_length = int("${{ matrix.max_length }}")
+          variant = "${{ matrix.variant }}"
 
-          raw = random.Random(5304).randbytes(31)
-          cuts = [round(i * len(raw) / members) for i in range(members + 1)]
-          compressed = b"".join(
-              gzip.compress(raw[cuts[i]:cuts[i + 1]])
-              for i in range(members)
+          rng = random.Random(5304)
+          raw = None
+          members = None
+          chunks = None
+          limits = None
+          for rep in range(247):
+              size = rng.randrange(0, 2**18)
+              raw_i = rng.randbytes(size)
+              members_i = rng.randrange(1, 9)
+              chunk_choices = [1, 7, 64, 256, 4096, 65536]
+              chunks_i = [rng.choice(chunk_choices) for _ in range(rng.randrange(1, 4))]
+              limit_choices = [-1, 1, 17, 8192]
+              limits_i = [rng.choice(limit_choices) for _ in range(rng.randrange(1, 4))]
+              trailing_garbage = rng.random() < 0.05
+              if rep == 246:
+                  raw = raw_i
+                  members = members_i
+                  chunks = chunks_i
+                  limits = limits_i
+                  break
+
+          assert raw is not None
+          label = "random-246"
+          cuts = sorted(
+              [0]
+              + [
+                  random.Random(f"{label}:{j}").randrange(len(raw) + 1)
+                  for j in range(members - 1)
+              ]
+              + [len(raw)]
           )
+          compressed = b"".join(
+              gzip.compress(raw[cuts[j] : cuts[j + 1]])
+              for j in range(members)
+          )
+
+          if variant == "fixed_chunk_64":
+              chunks = [64]
+          elif variant == "fixed_limit_neg1":
+              limits = [-1]
+          elif variant == "fixed_limit_1":
+              limits = [1]
+          elif variant == "fixed_limit_8192":
+              limits = [8192]
+          elif variant == "single_chunk_full":
+              chunks = [len(compressed)]
 
           decoder_cls = (
               BaselineGzipDecoder if decoder_side == "baseline" else GzipDecoder
           )
+
           print(
-              f"START side={decoder_side} members={members} "
-              f"max_length={max_length} compressed={len(compressed)}",
+              f"START side={decoder_side} variant={variant} "
+              f"size={len(raw)} members={members} cuts={cuts} "
+              f"chunks={chunks} limits={limits} compressed={len(compressed)}",
               flush=True,
           )
-          result = run_stream(
-              decoder_cls,
-              compressed,
-              chunk_sizes=[64],
-              limits=[max_length],
-          )
+          result = run_stream(decoder_cls, compressed, chunks, limits)
           print(
-              f"DONE side={decoder_side} members={members} "
-              f"max_length={max_length} output={len(result[0])} "
-              f"error={result[1]}",
+              f"DONE side={decoder_side} variant={variant} "
+              f"output={len(result[0])} error={result[1]}",
               flush=True,
           )
           sys.exit(0 if result[1] is None else 1)
