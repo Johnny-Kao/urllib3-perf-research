@@ -228,7 +228,9 @@ def median_call_us(
     return statistics.median(samples)
 
 
-def paired_full_decode(raw: bytes, loops: int = 20, rounds: int = 9) -> dict[str, float]:
+def paired_full_decode(
+    raw: bytes, loops: int = 20, rounds: int = 9
+) -> dict[str, float]:
     compressed = gzip.compress(raw, compresslevel=6)
     pairs: list[tuple[float, float]] = []
 
@@ -258,7 +260,9 @@ def paired_full_decode(raw: bytes, loops: int = 20, rounds: int = 9) -> dict[str
     }
 
 
-def bounded_benchmark(raw: bytes, max_length: int, loops: int = 300) -> dict[str, float]:
+def bounded_benchmark(
+    raw: bytes, max_length: int, loops: int = 300
+) -> dict[str, float]:
     compressed = gzip.compress(raw)
     results: dict[str, list[float]] = {"BaselineGzipDecoder": [], "GzipDecoder": []}
 
@@ -294,8 +298,7 @@ def multi_member_benchmark(total_bytes: int = 4 * 1024 * 1024) -> dict[str, floa
     raw = b"x" * total_bytes
     member_size = 64 * 1024
     compressed = b"".join(
-        gzip.compress(raw[i : i + member_size])
-        for i in range(0, len(raw), member_size)
+        gzip.compress(raw[i : i + member_size]) for i in range(0, len(raw), member_size)
     )
     values = {}
     for cls in (BaselineGzipDecoder, GzipDecoder):
