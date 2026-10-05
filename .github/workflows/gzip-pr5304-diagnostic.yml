@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        start_case: [200, 250]
+        start_case: [246]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,4 +40,4 @@ jobs:
       - name: Run deterministic correctness slice
         shell: bash
         run: |
-          python benchmarks/pr5304_gzip_evidence.py             --mode correctness             --start-case ${{ matrix.start_case }}             --cases 50             --skip-targeted
+          python benchmarks/pr5304_gzip_evidence.py             --mode correctness             --start-case ${{ matrix.start_case }}             --cases 1             --skip-targeted
