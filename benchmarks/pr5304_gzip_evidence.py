@@ -133,8 +133,18 @@ def _check_differential_case(
     if trailing_garbage:
         compressed += b"garbage"
 
+    print(f"{label} baseline_start", flush=True)
     baseline = run_stream(BaselineGzipDecoder, compressed, chunks, limits)
+    print(
+        f"{label} baseline_done output={len(baseline[0])} error={baseline[1]}",
+        flush=True,
+    )
+    print(f"{label} candidate_start", flush=True)
     candidate = run_stream(GzipDecoder, compressed, chunks, limits)
+    print(
+        f"{label} candidate_done output={len(candidate[0])} error={candidate[1]}",
+        flush=True,
+    )
     if baseline != candidate:
         raise AssertionError(
             "differential mismatch "
