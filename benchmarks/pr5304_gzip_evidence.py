@@ -118,6 +118,7 @@ def _check_differential_case(
     limits: list[int],
     trailing_garbage: bool,
     label: str,
+    decoder_side: str = "both",
 ) -> None:
     cuts = sorted(
         [0]
@@ -133,19 +134,23 @@ def _check_differential_case(
     if trailing_garbage:
         compressed += b"garbage"
 
-    print(f"{label} baseline_start", flush=True)
-    baseline = run_stream(BaselineGzipDecoder, compressed, chunks, limits)
-    print(
-        f"{label} baseline_done output={len(baseline[0])} error={baseline[1]}",
-        flush=True,
-    )
-    print(f"{label} candidate_start", flush=True)
-    candidate = run_stream(GzipDecoder, compressed, chunks, limits)
-    print(
-        f"{label} candidate_done output={len(candidate[0])} error={candidate[1]}",
-        flush=True,
-    )
-    if baseline != candidate:
+    baseline = None
+    candidate = None
+    if decoder_side in ("both", "baseline"):
+        print(f"{label} baseline_start", flush=True)
+        baseline = run_stream(BaselineGzipDecoder, compressed, chunks, limits)
+        print(
+            f"{label} baseline_done output={len(baseline[0])} error={baseline[1]}",
+            flush=True,
+        )
+    if decoder_side in ("both", "candidate"):
+        print(f"{label} candidate_start", flush=True)
+        candidate = run_stream(GzipDecoder, compressed, chunks, limits)
+        print(
+            f"{label} candidate_done output={len(candidate[0])} error={candidate[1]}",
+            flush=True,
+        )
+    if decoder_side == "both" and baseline != candidate:
         raise AssertionError(
             "differential mismatch "
             f"{label} size={len(raw)} members={members} "
@@ -156,7 +161,10 @@ def _check_differential_case(
 
 
 def differential_stress(
-    cases: int = 500, start_case: int = 0, run_targeted: bool = True
+    cases: int = 500,
+    start_case: int = 0,
+    run_targeted: bool = True,
+    decoder_side: str = "both",
 ) -> None:
     rng = random.Random(5304)
     sizes = [0, 1, 7, 31, 256, 1024, 8192, 65536]
@@ -203,6 +211,7 @@ def differential_stress(
             limits,
             trailing_garbage,
             label,
+            decoder_side=decoder_side,
         )
 
         completed = rep - start_case + 1
@@ -417,6 +426,11 @@ def main() -> None:
     parser.add_argument("--cases", type=int, default=5000)
     parser.add_argument("--start-case", type=int, default=0)
     parser.add_argument("--skip-targeted", action="store_true")
+    parser.add_argument(
+        "--decoder-side",
+        choices=("both", "baseline", "candidate"),
+        default="both",
+    )
     args = parser.parse_args()
 
     if args.mode in ("all", "correctness"):
@@ -424,6 +438,7 @@ def main() -> None:
             args.cases,
             start_case=args.start_case,
             run_targeted=not args.skip_targeted,
+            decoder_side=args.decoder_side,
         )
     if args.mode in ("all", "performance"):
         run_performance()
