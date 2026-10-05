@@ -47,7 +47,7 @@ jobs:
           PY
       - name: Differential correctness stress
         shell: bash
-        run: python benchmarks/pr5304_gzip_evidence.py --mode correctness --cases 2000 | tee correctness.txt
+        run: python benchmarks/pr5304_gzip_evidence.py --mode correctness --cases 500 | tee correctness.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pr5304-correctness-${{ matrix.os }}

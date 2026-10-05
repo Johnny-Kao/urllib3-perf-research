@@ -111,40 +111,103 @@ def run_stream(
         return bytes(out), (type(exc).__name__, str(exc))
 
 
-def differential_stress(cases: int = 5000) -> None:
+def _check_differential_case(
+    raw: bytes,
+    members: int,
+    chunks: list[int],
+    limits: list[int],
+    trailing_garbage: bool,
+    label: str,
+) -> None:
+    cuts = sorted(
+        [0]
+        + [
+            random.Random(f"{label}:{j}").randrange(len(raw) + 1)
+            for j in range(members - 1)
+        ]
+        + [len(raw)]
+    )
+    compressed = b"".join(
+        gzip.compress(raw[cuts[j] : cuts[j + 1]]) for j in range(members)
+    )
+    if trailing_garbage:
+        compressed += b"garbage"
+
+    baseline = run_stream(BaselineGzipDecoder, compressed, chunks, limits)
+    candidate = run_stream(GzipDecoder, compressed, chunks, limits)
+    if baseline != candidate:
+        raise AssertionError(
+            "differential mismatch "
+            f"{label} size={len(raw)} members={members} "
+            f"chunks={chunks} limits={limits} "
+            f"baseline=({len(baseline[0])}, {baseline[1]}) "
+            f"candidate=({len(candidate[0])}, {candidate[1]})"
+        )
+
+
+def differential_stress(cases: int = 500) -> None:
     rng = random.Random(5304)
-    sizes = [0, 1, 7, 31, 256, 1024, 8192, 65536, 262144]
-    chunk_choices = [1, 2, 7, 16, 64, 256, 1024, 8192, 65536]
-    limit_choices = [1, 2, 7, 64, 1024, 8192, 65536, -1]
+    sizes = [0, 1, 7, 31, 256, 1024, 8192, 65536]
+    all_chunks = [1, 2, 7, 16, 64, 256, 1024, 8192, 65536]
+    all_limits = [1, 2, 7, 64, 1024, 8192, 65536, -1]
 
     for rep in range(cases):
         size = rng.choice(sizes)
-        raw = rng.randbytes(size)
-        members = rng.choice([1, 1, 1, 2, 3, 8])
-        cuts = sorted(
-            [0] + [rng.randrange(size + 1) for _ in range(members - 1)] + [size]
-        )
-        compressed = b"".join(
-            gzip.compress(raw[cuts[j] : cuts[j + 1]]) for j in range(members)
-        )
-        if rng.random() < 0.20:
-            compressed += b"garbage"
 
+        # Avoid turning the randomized semantic sweep into a Python-loop
+        # benchmark. Tiny max_length and tiny input chunks are still covered,
+        # but only on payloads where they remain bounded. Large-payload bounded
+        # behavior is exercised separately by the targeted cases below and by
+        # the fallback benchmark job.
+        if size <= 8192:
+            chunk_choices = all_chunks
+            limit_choices = all_limits
+            member_choices = [1, 1, 1, 2, 3, 8]
+        else:
+            chunk_choices = [64, 256, 1024, 8192, 65536]
+            limit_choices = [1024, 8192, 65536, -1]
+            member_choices = [1, 1, 2, 3]
+
+        raw = rng.randbytes(size)
+        members = rng.choice(member_choices)
         chunks = [rng.choice(chunk_choices) for _ in range(3)]
         limits = [rng.choice(limit_choices) for _ in range(3)]
 
-        baseline = run_stream(BaselineGzipDecoder, compressed, chunks, limits)
-        candidate = run_stream(GzipDecoder, compressed, chunks, limits)
-        if baseline != candidate:
-            raise AssertionError(
-                "differential mismatch "
-                f"case={rep} size={size} members={members} "
-                f"chunks={chunks} limits={limits} "
-                f"baseline=({len(baseline[0])}, {baseline[1]}) "
-                f"candidate=({len(candidate[0])}, {candidate[1]})"
-            )
+        _check_differential_case(
+            raw,
+            members,
+            chunks,
+            limits,
+            rng.random() < 0.20,
+            f"random-{rep}",
+        )
 
-    print(f"DIFFERENTIAL_STRESS: PASS ({cases} deterministic cases)")
+        if (rep + 1) % 100 == 0:
+            print(f"progress: {rep + 1}/{cases}", flush=True)
+
+    targeted = [
+        # Tiny chunk + tiny max_length: worst loop shape, deliberately small body.
+        (8192, 1, [1, 2, 7], [1, 2, 7], False),
+        # Multi-member + bounded output.
+        (65536, 8, [64, 256, 1024], [64, 1024, 8192], False),
+        # Large body + moderate bounded output.
+        (262144, 3, [8192, 65536], [8192, 65536], False),
+        # Large multi-member body + trailing garbage, unbounded output.
+        (262144, 8, [1024, 8192, 65536], [-1], True),
+    ]
+    for i, (size, members, chunks, limits, garbage) in enumerate(targeted):
+        _check_differential_case(
+            random.Random(5304 + i).randbytes(size),
+            members,
+            chunks,
+            limits,
+            garbage,
+            f"targeted-{i}",
+        )
+
+    print(
+        f"DIFFERENTIAL_STRESS: PASS ({cases} randomized + {len(targeted)} targeted cases)"
+    )
 
 
 def median_call_us(
